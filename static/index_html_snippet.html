@@ -1,0 +1,22 @@
+<!--
+  Add this immediately AFTER the existing Mode button on line ~63 of index.html,
+  inside the same container as <span>Mode:</span> and <button id="searchModeBtn">.
+
+  The upload wrap is hidden by default; _applySearchMode() shows it when
+  Visual mode is active.
+-->
+
+<span id="visualUploadWrap" style="display:none;gap:8px;align-items:center;margin-left:8px">
+  <label for="visualFileInput"
+         style="padding:4px 12px;border:1px solid var(--border2);border-radius:999px;
+                background:none;font-size:.72rem;font-weight:600;cursor:pointer;
+                color:var(--muted);font-family:'Inter',sans-serif;transition:all .2s"
+         title="Upload a blueprint or drawing">
+    📎 Upload image
+  </label>
+  <input id="visualFileInput" type="file" accept="image/*" style="display:none">
+  <span id="visualPreview"
+        style="display:none;gap:6px;align-items:center;padding:2px 8px;
+               border:1px solid var(--border2);border-radius:999px;
+               background:var(--panel)"></span>
+</span>

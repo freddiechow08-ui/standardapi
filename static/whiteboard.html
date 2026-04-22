@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Whiteboard — HK Patent Search</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #fafaf7;
+    --panel: #ffffff;
+    --border: #e5e5e2;
+    --border-strong: #c8c8c2;
+    --text: #1a1a1a;
+    --muted: #6c6c66;
+    --accent: #3a6ef5;
+    --yellow: #fff4a3;
+    --pink: #ffc2d0;
+    --green: #c0f0c8;
+    --blue: #c5dcff;
+    --purple: #e0ccff;
+  }
+  body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); overflow: hidden; height: 100vh; }
+
+  /* Top toolbar */
+  #toolbar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    background: rgba(255,255,255,.9); backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+    font-size: .82rem;
+  }
+  #toolbar .brand { font-weight: 700; color: var(--text); margin-right: 8px; }
+  #toolbar .sep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
+  .tool-btn {
+    padding: 6px 12px; border: 1px solid var(--border); background: var(--panel);
+    border-radius: 8px; cursor: pointer; font-size: .78rem; color: var(--text);
+    display: inline-flex; align-items: center; gap: 6px;
+    transition: all .15s;
+  }
+  .tool-btn:hover { border-color: var(--border-strong); transform: translateY(-1px); }
+  .tool-btn:active { transform: translateY(0); }
+  .tool-btn.active { background: var(--text); color: var(--panel); border-color: var(--text); }
+  .tool-btn.tb-ai { background: linear-gradient(135deg,#7c3aed,#ec4899); color:#fff; border:none; }
+  #zoomLevel { min-width: 45px; text-align: center; font-variant-numeric: tabular-nums; color: var(--muted); }
+  #toolbar .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  #saveStatus { font-size:.7rem; color: var(--muted); }
+
+  /* Side panel: search patents to drag in */
+  #sidePanel {
+    position: fixed; top: 56px; right: 0; bottom: 0; width: 320px; z-index: 50;
+    background: var(--panel); border-left: 1px solid var(--border);
+    transform: translateX(100%); transition: transform .25s ease;
+    display: flex; flex-direction: column;
+  }
+  #sidePanel.open { transform: translateX(0); }
+  #sidePanel h3 { padding: 14px 16px 8px; font-size: .9rem; }
+  #sidePanel input {
+    margin: 0 16px 10px; padding: 8px 12px;
+    border: 1px solid var(--border); border-radius: 6px; font-size: .82rem;
+  }
+  #sidePanel .sp-results { flex: 1; overflow-y: auto; padding: 0 12px 16px; }
+  .sp-card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 12px; margin-bottom: 8px; cursor: grab; font-size: .76rem;
+    transition: all .15s;
+  }
+  .sp-card:hover { border-color: var(--accent); transform: translateY(-1px); box-shadow: 0 4px 10px rgba(0,0,0,.05); }
+  .sp-card:active { cursor: grabbing; }
+  .sp-card .sp-title { font-weight: 600; margin-bottom: 3px; color: var(--text); line-height: 1.3; }
+  .sp-card .sp-meta  { color: var(--muted); font-size: .68rem; }
+
+  /* Infinite canvas */
+  #canvasWrap {
+    position: fixed; top: 56px; left: 0; right: 0; bottom: 0;
+    overflow: hidden; cursor: default;
+    background-color: var(--bg);
+    background-image: radial-gradient(circle, #d0d0cc 1px, transparent 1px);
+    background-size: 20px 20px; background-position: 0 0;
+  }
+  #canvasWrap.panning { cursor: grabbing; }
+  #canvasWrap.tool-sticky,
+  #canvasWrap.tool-rect,
+  #canvasWrap.tool-ellipse,
+  #canvasWrap.tool-arrow,
+  #canvasWrap.tool-text { cursor: crosshair; }
+
+  #canvas {
+    position: absolute; top: 0; left: 0;
+    transform-origin: 0 0;
+    will-change: transform;
+  }
+
+  /* Whiteboard items */
+  .wb-item {
+    position: absolute;
+    cursor: move; user-select: none;
+    transition: box-shadow .15s;
+  }
+  .wb-item.selected { box-shadow: 0 0 0 2px var(--accent); z-index: 10; }
+  .wb-item:hover:not(.selected) { box-shadow: 0 2px 12px rgba(0,0,0,.08); }
+
+  .wb-sticky {
+    padding: 12px; border-radius: 4px; min-width: 140px; min-height: 80px;
+    font-size: 14px; line-height: 1.4;
+    box-shadow: 0 2px 8px rgba(0,0,0,.08);
+    outline: none;
+  }
+  .wb-sticky[contenteditable="true"] { cursor: text; }
+
+  .wb-rect, .wb-ellipse {
+    background: rgba(255,255,255,.5);
+    border: 2px solid #555;
+  }
+  .wb-ellipse { border-radius: 50%; }
+
+  .wb-text {
+    padding: 4px 8px; color: var(--text); font-size: 16px;
+    min-width: 40px; white-space: pre-wrap; outline: none;
+    background: transparent;
+  }
+
+  .wb-patent {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px 14px; width: 240px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.06);
+    font-size: 13px;
+  }
+  .wb-patent .wbp-title   { font-weight: 600; line-height: 1.3; margin-bottom: 4px; color: var(--text); }
+  .wb-patent .wbp-meta    { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+  .wb-patent .wbp-abstract{ font-size: 11.5px; color: var(--text); opacity: .8; line-height: 1.4; max-height: 60px; overflow: hidden; }
+  .wb-patent .wbp-num     { display: inline-block; padding: 1px 6px; background: #f0f0ec; border-radius: 3px; font-family: monospace; font-size: 10px; margin-top: 6px; }
+
+  /* SVG layer for arrows */
+  #arrowLayer { position: absolute; top: 0; left: 0; pointer-events: none; overflow: visible; }
+  .wb-arrow { stroke: #444; stroke-width: 2; fill: none; pointer-events: stroke; cursor: pointer; }
+  .wb-arrow.selected { stroke: var(--accent); stroke-width: 3; }
+
+  /* Handles */
+  .handle {
+    position: absolute; width: 10px; height: 10px;
+    background: #fff; border: 2px solid var(--accent);
+    border-radius: 50%;
+  }
+  .handle.br { right: -6px; bottom: -6px; cursor: nwse-resize; }
+
+  /* Context menu */
+  #ctxMenu {
+    position: fixed; z-index: 200;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0,0,0,.12); padding: 4px 0; min-width: 160px;
+    font-size: .82rem; display: none;
+  }
+  #ctxMenu button {
+    display: block; width: 100%; text-align: left;
+    padding: 7px 14px; border: none; background: none; cursor: pointer;
+    font-size: .82rem; color: var(--text);
+  }
+  #ctxMenu button:hover { background: #f5f5f0; }
+  #ctxMenu .danger { color: #d13b3b; }
+
+  /* Color palette for stickies */
+  .color-picker { display: inline-flex; gap: 4px; padding: 0 4px; }
+  .color-swatch {
+    width: 20px; height: 20px; border-radius: 4px; border: 2px solid transparent;
+    cursor: pointer; transition: transform .1s;
+  }
+  .color-swatch:hover { transform: scale(1.1); }
+  .color-swatch.active { border-color: var(--text); }
+
+  /* Mini-map */
+  #miniMap {
+    position: fixed; bottom: 16px; right: 16px; z-index: 60;
+    width: 160px; height: 100px; background: rgba(255,255,255,.85);
+    border: 1px solid var(--border); border-radius: 8px;
+    overflow: hidden; cursor: pointer;
+  }
+  #miniMapViewport {
+    position: absolute; border: 2px solid var(--accent);
+    background: rgba(58,110,245,.1); pointer-events: none;
+  }
+  .mm-dot { position: absolute; width: 3px; height: 3px; background: var(--text); border-radius: 50%; }
+
+  /* Help overlay */
+  #help {
+    position: fixed; bottom: 16px; left: 16px; z-index: 60;
+    background: rgba(20,20,20,.85); color: #fff;
+    padding: 10px 14px; border-radius: 8px;
+    font-size: .72rem; line-height: 1.6; max-width: 260px;
+    transition: opacity .3s;
+  }
+  #help.hidden { opacity: 0; pointer-events: none; }
+  #help kbd {
+    display: inline-block; padding: 1px 5px; background: rgba(255,255,255,.2);
+    border-radius: 3px; font-family: monospace; font-size: .7rem;
+  }
+</style>
+</head>
+<body>
+
+<!-- ── TOP TOOLBAR ── -->
+<div id="toolbar">
+  <a href="/" style="text-decoration:none;color:inherit"><span class="brand">← HK Patent Search</span></a>
+  <span class="sep"></span>
+
+  <button class="tool-btn active" data-tool="select" title="Select (V)">↖</button>
+  <button class="tool-btn" data-tool="sticky"  title="Sticky note (S)">🟨 Note</button>
+  <button class="tool-btn" data-tool="text"    title="Text (T)">T</button>
+  <button class="tool-btn" data-tool="rect"    title="Rectangle (R)">▭</button>
+  <button class="tool-btn" data-tool="ellipse" title="Ellipse (O)">○</button>
+  <button class="tool-btn" data-tool="arrow"   title="Arrow (A)">↗</button>
+
+  <span class="sep"></span>
+
+  <div class="color-picker">
+    <div class="color-swatch active" data-color="var(--yellow)" style="background:var(--yellow)"></div>
+    <div class="color-swatch" data-color="var(--pink)"   style="background:var(--pink)"></div>
+    <div class="color-swatch" data-color="var(--green)"  style="background:var(--green)"></div>
+    <div class="color-swatch" data-color="var(--blue)"   style="background:var(--blue)"></div>
+    <div class="color-swatch" data-color="var(--purple)" style="background:var(--purple)"></div>
+  </div>
+
+  <span class="sep"></span>
+
+  <button class="tool-btn" onclick="togglePanel()" title="Drag patents from here">📄 Patents</button>
+  <button class="tool-btn tb-ai" onclick="askAI()" title="Let Gemini suggest stickies">✨ AI Assist</button>
+
+  <div class="right">
+    <button class="tool-btn" onclick="zoomOut()">−</button>
+    <span id="zoomLevel">100%</span>
+    <button class="tool-btn" onclick="zoomIn()">+</button>
+    <button class="tool-btn" onclick="fitToView()" title="Fit to view">⊡</button>
+    <span class="sep"></span>
+    <span id="saveStatus">●  saved</span>
+    <button class="tool-btn" onclick="exportJSON()">⬇ Export</button>
+  </div>
+</div>
+
+<!-- ── MAIN CANVAS ── -->
+<div id="canvasWrap">
+  <svg id="arrowLayer" width="100%" height="100%">
+    <defs>
+      <marker id="arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+        <path d="M0 0L10 5L0 10z" fill="#444"/>
+      </marker>
+    </defs>
+  </svg>
+  <div id="canvas"></div>
+</div>
+
+<!-- ── SIDE PANEL (patent drag source) ── -->
+<div id="sidePanel">
+  <h3>Drag patents onto the board</h3>
+  <input type="text" id="sp-search" placeholder="Search your 200k HK patents…">
+  <div class="sp-results" id="sp-results">
+    <div style="color:var(--muted);font-size:.75rem;padding:20px;text-align:center">
+      Search patents above, then drag any result onto the whiteboard.
+    </div>
+  </div>
+</div>
+
+<!-- ── CONTEXT MENU ── -->
+<div id="ctxMenu">
+  <button onclick="ctxDuplicate()">📑 Duplicate</button>
+  <button onclick="ctxBringFront()">⇧ Bring to front</button>
+  <button onclick="ctxSendBack()">⇩ Send to back</button>
+  <button class="danger" onclick="ctxDelete()">✕ Delete</button>
+</div>
+
+<!-- ── MINIMAP & HELP ── -->
+<div id="miniMap"><div id="miniMapViewport"></div></div>
+<div id="help">
+  Drag to move · Scroll to zoom · <kbd>Space</kbd> + drag to pan<br>
+  <kbd>V</kbd> select · <kbd>S</kbd> sticky · <kbd>T</kbd> text · <kbd>R</kbd> rect · <kbd>A</kbd> arrow<br>
+  <kbd>Delete</kbd> remove · <kbd>Ctrl+D</kbd> duplicate · <kbd>Esc</kbd> deselect
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════
+// STATE
+// ════════════════════════════════════════════════════════════
+const STATE = {
+  items:     [],            // { id, type, x, y, w, h, color, text, meta, z }
+  arrows:    [],            // { id, fromId, toId, z }
+  nextId:    1,
+  nextZ:     1,
+  tool:      'select',
+  color:     'var(--yellow)',
+  pan:       { x: 100, y: 80 },
+  zoom:      1,
+  selected:  null,          // item id or arrow id
+  arrowFrom: null,          // during arrow draw
+};
+
+const $ = s => document.querySelector(s);
+const $$ = s => document.querySelectorAll(s);
+const canvas = $('#canvas');
+const wrap   = $('#canvasWrap');
+const svg    = $('#arrowLayer');
+const STORAGE_KEY = 'hkps_whiteboard_v1';
+
+// ════════════════════════════════════════════════════════════
+// PERSISTENCE
+// ════════════════════════════════════════════════════════════
+function saveState() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      items: STATE.items, arrows: STATE.arrows,
+      nextId: STATE.nextId, nextZ: STATE.nextZ,
+      pan: STATE.pan, zoom: STATE.zoom,
+    }));
+    $('#saveStatus').textContent = '●  saved';
+    $('#saveStatus').style.color = 'var(--muted)';
+  } catch (e) {
+    $('#saveStatus').textContent = '● unsaved';
+    $('#saveStatus').style.color = '#d13b3b';
+  }
+}
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const d = JSON.parse(raw);
+    STATE.items   = d.items   || [];
+    STATE.arrows  = d.arrows  || [];
+    STATE.nextId  = d.nextId  || 1;
+    STATE.nextZ   = d.nextZ   || 1;
+    STATE.pan     = d.pan     || { x: 100, y: 80 };
+    STATE.zoom    = d.zoom    || 1;
+  } catch (e) { console.warn('load failed', e); }
+}
+let saveTimer;
+function queueSave() {
+  clearTimeout(saveTimer);
+  $('#saveStatus').textContent = '○  saving…';
+  saveTimer = setTimeout(saveState, 400);
+}
+
+// ════════════════════════════════════════════════════════════
+// TRANSFORM / ZOOM / PAN
+// ════════════════════════════════════════════════════════════
+function applyTransform() {
+  canvas.style.transform = `translate(${STATE.pan.x}px, ${STATE.pan.y}px) scale(${STATE.zoom})`;
+  svg.style.transform    = canvas.style.transform;
+  wrap.style.backgroundPosition = `${STATE.pan.x}px ${STATE.pan.y}px`;
+  wrap.style.backgroundSize = `${20 * STATE.zoom}px ${20 * STATE.zoom}px`;
+  $('#zoomLevel').textContent = Math.round(STATE.zoom * 100) + '%';
+  updateArrows();
+  updateMinimap();
+}
+function screenToCanvas(x, y) {
+  return { x: (x - STATE.pan.x) / STATE.zoom, y: (y - STATE.pan.y - 56) / STATE.zoom };
+}
+function zoomIn()  { setZoom(STATE.zoom * 1.2); }
+function zoomOut() { setZoom(STATE.zoom / 1.2); }
+function setZoom(z, cx, cy) {
+  z = Math.max(0.2, Math.min(3, z));
+  if (cx !== undefined) {
+    const before = screenToCanvas(cx, cy);
+    STATE.zoom = z;
+    const after = screenToCanvas(cx, cy);
+    STATE.pan.x += (after.x - before.x) * z;
+    STATE.pan.y += (after.y - before.y) * z;
+  } else {
+    STATE.zoom = z;
+  }
+  applyTransform();
+  queueSave();
+}
+function fitToView() {
+  if (!STATE.items.length) { STATE.pan = { x: 100, y: 80 }; STATE.zoom = 1; applyTransform(); return; }
+  const xs = STATE.items.map(i => i.x), ys = STATE.items.map(i => i.y);
+  const xe = STATE.items.map(i => i.x + (i.w || 160)), ye = STATE.items.map(i => i.y + (i.h || 100));
+  const minX = Math.min(...xs), minY = Math.min(...ys);
+  const maxX = Math.max(...xe), maxY = Math.max(...ye);
+  const w = maxX - minX, h = maxY - minY;
+  const padding = 60;
+  STATE.zoom = Math.min(1, Math.min((wrap.clientWidth - padding * 2) / w, (wrap.clientHeight - padding * 2) / h));
+  STATE.pan.x = padding - minX * STATE.zoom;
+  STATE.pan.y = padding - minY * STATE.zoom;
+  applyTransform();
+  queueSave();
+}
+
+// ════════════════════════════════════════════════════════════
+// RENDER
+// ════════════════════════════════════════════════════════════
+function renderAll() {
+  canvas.innerHTML = '';
+  STATE.items.forEach(renderItem);
+  updateArrows();
+  updateMinimap();
+}
+function renderItem(it) {
+  let el = document.querySelector(`[data-id="${it.id}"]`);
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'wb-item wb-' + it.type;
+    el.dataset.id = it.id;
+    canvas.appendChild(el);
+    attachItemHandlers(el);
+  }
+  el.style.left = it.x + 'px';
+  el.style.top  = it.y + 'px';
+  el.style.zIndex = it.z || 1;
+  if (it.w) el.style.width  = it.w + 'px';
+  if (it.h) el.style.height = it.h + 'px';
+
+  if (it.type === 'sticky') {
+    el.style.background = it.color || 'var(--yellow)';
+    el.textContent = it.text || '';
+    el.contentEditable = 'false';
+  } else if (it.type === 'text') {
+    el.textContent = it.text || 'Text';
+  } else if (it.type === 'patent') {
+    const m = it.meta || {};
+    el.innerHTML = `
+      <div class="wbp-title">${esc(m.title || 'Untitled')}</div>
+      <div class="wbp-meta">${esc(m.assignee || m.inventor || '')}</div>
+      <div class="wbp-abstract">${esc((m.abstract || '').slice(0, 180))}</div>
+      <div class="wbp-num">${esc(m.patent_number || '')}</div>`;
+  } else if (it.type === 'rect' || it.type === 'ellipse') {
+    // styled via CSS
+  }
+  el.classList.toggle('selected', STATE.selected === it.id);
+}
+function esc(s) { return String(s || '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]); }
+
+// ════════════════════════════════════════════════════════════
+// ITEM INTERACTION (drag, select, edit)
+// ════════════════════════════════════════════════════════════
+function attachItemHandlers(el) {
+  let drag = null;
+
+  el.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    const id  = +el.dataset.id;
+    const it  = STATE.items.find(x => x.id === id);
+    if (!it) return;
+
+    // Arrow tool: start an arrow from this item
+    if (STATE.tool === 'arrow') {
+      STATE.arrowFrom = id;
+      return;
+    }
+
+    selectItem(id);
+
+    // Text/sticky double-click-to-edit handled separately
+    drag = {
+      startX: e.clientX, startY: e.clientY,
+      origX: it.x, origY: it.y,
+      moved: false,
+    };
+  });
+
+  el.addEventListener('dblclick', e => {
+    const id = +el.dataset.id;
+    const it = STATE.items.find(x => x.id === id);
+    if (!it) return;
+    if (it.type === 'sticky' || it.type === 'text') {
+      el.contentEditable = 'true';
+      el.focus();
+      document.execCommand('selectAll', false, null);
+      e.stopPropagation();
+    }
+  });
+
+  el.addEventListener('blur', () => {
+    const id = +el.dataset.id;
+    const it = STATE.items.find(x => x.id === id);
+    if (!it) return;
+    if (el.contentEditable === 'true') {
+      it.text = el.textContent;
+      el.contentEditable = 'false';
+      queueSave();
+    }
+  });
+
+  el.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    selectItem(+el.dataset.id);
+    showCtxMenu(e.clientX, e.clientY);
+  });
+
+  document.addEventListener('mousemove', e => {
+    if (!drag) return;
+    const dx = (e.clientX - drag.startX) / STATE.zoom;
+    const dy = (e.clientY - drag.startY) / STATE.zoom;
+    if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+    const id = +el.dataset.id;
+    const it = STATE.items.find(x => x.id === id);
+    if (!it) return;
+    it.x = drag.origX + dx;
+    it.y = drag.origY + dy;
+    el.style.left = it.x + 'px';
+    el.style.top  = it.y + 'px';
+    updateArrows();
+  });
+
+  document.addEventListener('mouseup', e => {
+    if (drag && drag.moved) queueSave();
+    drag = null;
+
+    // Finish arrow: if mouseup on another item while arrow tool active
+    if (STATE.tool === 'arrow' && STATE.arrowFrom) {
+      const target = e.target.closest('.wb-item');
+      if (target && +target.dataset.id !== STATE.arrowFrom) {
+        const arrow = {
+          id: 'a' + STATE.nextId++,
+          fromId: STATE.arrowFrom,
+          toId: +target.dataset.id,
+        };
+        STATE.arrows.push(arrow);
+        updateArrows();
+        queueSave();
+      }
+      STATE.arrowFrom = null;
+    }
+  });
+}
+
+function selectItem(id) {
+  STATE.selected = id;
+  $$('.wb-item').forEach(el => el.classList.toggle('selected', +el.dataset.id === id));
+  updateArrows();  // for arrow-selection styling
+}
+function deselect() {
+  STATE.selected = null;
+  $$('.wb-item').forEach(el => el.classList.remove('selected'));
+  updateArrows();
+}
+
+// ════════════════════════════════════════════════════════════
+// CREATE ITEMS
+// ════════════════════════════════════════════════════════════
+function createItem(type, x, y, extra = {}) {
+  const id = STATE.nextId++;
+  const it = {
+    id, type, x, y, z: STATE.nextZ++,
+    w: extra.w, h: extra.h,
+    color: extra.color || STATE.color,
+    text:  extra.text  || defaultText(type),
+    meta:  extra.meta,
+  };
+  if (type === 'sticky') { it.w = it.w || 180; it.h = it.h || 120; }
+  if (type === 'rect' || type === 'ellipse') { it.w = it.w || 160; it.h = it.h || 110; }
+  if (type === 'patent') { it.w = 240; }
+  STATE.items.push(it);
+  renderItem(it);
+  selectItem(id);
+  queueSave();
+  return it;
+}
+function defaultText(type) {
+  if (type === 'sticky') return 'Double-click to edit';
+  if (type === 'text')   return 'Text';
+  return '';
+}
+
+// ════════════════════════════════════════════════════════════
+// CANVAS INTERACTION (pan, create, deselect)
+// ════════════════════════════════════════════════════════════
+let panning = null, spaceDown = false;
+
+wrap.addEventListener('mousedown', e => {
+  if (e.target !== wrap && !e.target.closest('#arrowLayer')) return;
+  if (STATE.tool === 'select' || spaceDown || e.button === 1) {
+    // Pan mode
+    panning = { startX: e.clientX, startY: e.clientY, origX: STATE.pan.x, origY: STATE.pan.y };
+    wrap.classList.add('panning');
+  } else {
+    // Create item at click position
+    const p = screenToCanvas(e.clientX, e.clientY);
+    if (STATE.tool === 'sticky' || STATE.tool === 'text' || STATE.tool === 'rect' || STATE.tool === 'ellipse') {
+      createItem(STATE.tool, p.x, p.y);
+      setTool('select');
+    }
+  }
+  deselect();
+});
+document.addEventListener('mousemove', e => {
+  if (!panning) return;
+  STATE.pan.x = panning.origX + (e.clientX - panning.startX);
+  STATE.pan.y = panning.origY + (e.clientY - panning.startY);
+  applyTransform();
+});
+document.addEventListener('mouseup', () => {
+  if (panning) { queueSave(); panning = null; wrap.classList.remove('panning'); }
+});
+
+wrap.addEventListener('wheel', e => {
+  e.preventDefault();
+  if (e.ctrlKey || e.metaKey || Math.abs(e.deltaX) < 1) {
+    // zoom
+    setZoom(STATE.zoom * (e.deltaY < 0 ? 1.1 : 0.9), e.clientX, e.clientY);
+  } else {
+    STATE.pan.x -= e.deltaX;
+    STATE.pan.y -= e.deltaY;
+    applyTransform();
+    queueSave();
+  }
+}, { passive: false });
+
+// ════════════════════════════════════════════════════════════
+// ARROWS (SVG)
+// ════════════════════════════════════════════════════════════
+function updateArrows() {
+  const ns = 'http://www.w3.org/2000/svg';
+  // clear existing paths
+  svg.querySelectorAll('path').forEach(p => p.remove());
+
+  STATE.arrows.forEach(a => {
+    const fromIt = STATE.items.find(i => i.id === a.fromId);
+    const toIt   = STATE.items.find(i => i.id === a.toId);
+    if (!fromIt || !toIt) return;
+    const fromEl = document.querySelector(`[data-id="${a.fromId}"]`);
+    const toEl   = document.querySelector(`[data-id="${a.toId}"]`);
+    const fw = fromEl ? fromEl.offsetWidth : 100;
+    const fh = fromEl ? fromEl.offsetHeight : 60;
+    const tw = toEl   ? toEl.offsetWidth   : 100;
+    const th = toEl   ? toEl.offsetHeight  : 60;
+    const x1 = fromIt.x + fw / 2, y1 = fromIt.y + fh / 2;
+    const x2 = toIt.x   + tw / 2, y2 = toIt.y   + th / 2;
+    // Edge clip — shorten line ends so they meet rectangle edges, not centers
+    const [ax, ay] = clipToRect(x2, y2, x1, y1, fromIt.x, fromIt.y, fw, fh);
+    const [bx, by] = clipToRect(x1, y1, x2, y2, toIt.x, toIt.y, tw, th);
+    const path = document.createElementNS(ns, 'path');
+    const mx = (ax + bx) / 2, my = (ay + by) / 2 - 20;
+    path.setAttribute('d', `M ${ax} ${ay} Q ${mx} ${my} ${bx} ${by}`);
+    path.setAttribute('class', 'wb-arrow' + (STATE.selected === a.id ? ' selected' : ''));
+    path.setAttribute('marker-end', 'url(#arrowhead)');
+    path.dataset.arrowId = a.id;
+    path.addEventListener('click', e => { e.stopPropagation(); STATE.selected = a.id; updateArrows(); });
+    svg.appendChild(path);
+  });
+}
+function clipToRect(fromX, fromY, toX, toY, rx, ry, rw, rh) {
+  // returns the point where the line from (fromX,fromY) to (toX,toY) exits the rect (rx,ry,rw,rh)
+  const cx = rx + rw/2, cy = ry + rh/2;
+  const dx = fromX - cx, dy = fromY - cy;
+  const absDx = Math.abs(dx), absDy = Math.abs(dy);
+  const scaleX = rw/2 / (absDx || 1), scaleY = rh/2 / (absDy || 1);
+  const scale = Math.min(scaleX, scaleY);
+  return [cx + dx * scale, cy + dy * scale];
+}
+
+// ════════════════════════════════════════════════════════════
+// TOOLBAR
+// ════════════════════════════════════════════════════════════
+$$('#toolbar [data-tool]').forEach(b => {
+  b.addEventListener('click', () => setTool(b.dataset.tool));
+});
+function setTool(t) {
+  STATE.tool = t;
+  $$('#toolbar [data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
+  wrap.className = 'tool-' + t;
+}
+$$('.color-swatch').forEach(s => s.addEventListener('click', () => {
+  STATE.color = s.dataset.color;
+  $$('.color-swatch').forEach(x => x.classList.remove('active'));
+  s.classList.add('active');
+  if (STATE.selected) {
+    const it = STATE.items.find(i => i.id === STATE.selected);
+    if (it && it.type === 'sticky') { it.color = STATE.color; renderItem(it); queueSave(); }
+  }
+}));
+
+// ════════════════════════════════════════════════════════════
+// SIDE PANEL — drag patents in
+// ════════════════════════════════════════════════════════════
+function togglePanel() {
+  $('#sidePanel').classList.toggle('open');
+}
+let spTimer;
+$('#sp-search').addEventListener('input', e => {
+  clearTimeout(spTimer);
+  spTimer = setTimeout(() => spSearch(e.target.value.trim()), 300);
+});
+async function spSearch(q) {
+  const box = $('#sp-results');
+  if (!q) { box.innerHTML = '<div style="color:var(--muted);font-size:.75rem;padding:20px;text-align:center">Search patents above, then drag any result.</div>'; return; }
+  box.innerHTML = '<div style="color:var(--muted);font-size:.75rem;padding:20px;text-align:center">Searching…</div>';
+  try {
+    const r = await fetch('/api/search?q=' + encodeURIComponent(q)).then(x => x.json());
+    const list = (r.results || []).slice(0, 30);
+    if (!list.length) { box.innerHTML = '<div style="color:var(--muted);font-size:.75rem;padding:20px;text-align:center">No results</div>'; return; }
+    box.innerHTML = list.map(p => `
+      <div class="sp-card" draggable="true" data-patent='${esc(JSON.stringify(p))}'>
+        <div class="sp-title">${esc((p.title || '').slice(0, 80))}</div>
+        <div class="sp-meta">${esc(p.patent_number)} · ${esc((p.assignee || '').slice(0, 40))}</div>
+      </div>`).join('');
+    box.querySelectorAll('.sp-card').forEach(c => {
+      c.addEventListener('dragstart', e => {
+        e.dataTransfer.setData('patent', c.dataset.patent);
+      });
+    });
+  } catch (err) {
+    box.innerHTML = '<div style="color:#d13b3b;font-size:.75rem;padding:20px;text-align:center">Search failed</div>';
+  }
+}
+wrap.addEventListener('dragover', e => { e.preventDefault(); });
+wrap.addEventListener('drop', e => {
+  e.preventDefault();
+  const data = e.dataTransfer.getData('patent');
+  if (!data) return;
+  try {
+    const p = JSON.parse(data);
+    const pos = screenToCanvas(e.clientX, e.clientY);
+    createItem('patent', pos.x - 120, pos.y - 40, { meta: p });
+  } catch {}
+});
+
+// ════════════════════════════════════════════════════════════
+// AI ASSIST
+// ════════════════════════════════════════════════════════════
+async function askAI() {
+  const topic = prompt('What would you like the AI to brainstorm?\n(e.g., "pros and cons of solid-state batteries")');
+  if (!topic) return;
+  const btn = document.querySelector('.tb-ai');
+  const orig = btn.textContent;
+  btn.textContent = 'Thinking…';
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/ai/generate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        system: 'You help brainstorm on a whiteboard. Given a topic, produce 5-8 short sticky-note-sized ideas (each 4-12 words). Reply ONLY with a JSON array of strings, no other text.',
+        messages: [{ role: 'user', content: topic }],
+        max: 800,
+      }),
+    }).then(x => x.json());
+    let notes = [];
+    try { notes = JSON.parse((r.text || '').replace(/```json|```/g, '').trim()); } catch {}
+    if (!Array.isArray(notes) || !notes.length) throw new Error('no ideas');
+    // Place in grid near current viewport center
+    const vc = screenToCanvas(wrap.clientWidth / 2, wrap.clientHeight / 2);
+    notes.forEach((txt, i) => {
+      const col = i % 3, row = Math.floor(i / 3);
+      createItem('sticky', vc.x + col * 200 - 200, vc.y + row * 140 - 100, { text: String(txt).slice(0, 120) });
+    });
+  } catch (err) {
+    alert('AI assist failed. Try again.');
+  } finally {
+    btn.textContent = orig;
+    btn.disabled = false;
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// CONTEXT MENU
+// ════════════════════════════════════════════════════════════
+function showCtxMenu(x, y) {
+  const m = $('#ctxMenu');
+  m.style.display = 'block';
+  m.style.left = x + 'px';
+  m.style.top  = y + 'px';
+}
+function hideCtxMenu() { $('#ctxMenu').style.display = 'none'; }
+document.addEventListener('click', hideCtxMenu);
+
+function ctxDuplicate() {
+  const id = STATE.selected; if (!id || typeof id !== 'number') return;
+  const it = STATE.items.find(i => i.id === id); if (!it) return;
+  createItem(it.type, it.x + 30, it.y + 30, { text: it.text, color: it.color, meta: it.meta, w: it.w, h: it.h });
+  hideCtxMenu();
+}
+function ctxDelete() {
+  const id = STATE.selected; if (!id) return;
+  if (typeof id === 'number') {
+    STATE.items = STATE.items.filter(i => i.id !== id);
+    STATE.arrows = STATE.arrows.filter(a => a.fromId !== id && a.toId !== id);
+  } else {
+    STATE.arrows = STATE.arrows.filter(a => a.id !== id);
+  }
+  STATE.selected = null;
+  renderAll();
+  queueSave();
+  hideCtxMenu();
+}
+function ctxBringFront() {
+  const it = STATE.items.find(i => i.id === STATE.selected); if (!it) return;
+  it.z = STATE.nextZ++;
+  renderItem(it);
+  queueSave();
+  hideCtxMenu();
+}
+function ctxSendBack() {
+  const it = STATE.items.find(i => i.id === STATE.selected); if (!it) return;
+  const minZ = Math.min(...STATE.items.map(x => x.z || 1));
+  it.z = minZ - 1;
+  renderItem(it);
+  queueSave();
+  hideCtxMenu();
+}
+
+// ════════════════════════════════════════════════════════════
+// EXPORT
+// ════════════════════════════════════════════════════════════
+function exportJSON() {
+  const blob = new Blob([JSON.stringify({ items: STATE.items, arrows: STATE.arrows }, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'whiteboard-' + new Date().toISOString().slice(0, 10) + '.json';
+  a.click();
+}
+
+// ════════════════════════════════════════════════════════════
+// MINIMAP
+// ════════════════════════════════════════════════════════════
+function updateMinimap() {
+  const mm = $('#miniMap');
+  if (!STATE.items.length) { mm.innerHTML = '<div id="miniMapViewport"></div>'; return; }
+  const xs = STATE.items.map(i => i.x), ys = STATE.items.map(i => i.y);
+  const xe = STATE.items.map(i => i.x + (i.w || 100)), ye = STATE.items.map(i => i.y + (i.h || 80));
+  const pad = 50;
+  const minX = Math.min(...xs, STATE.pan.x) - pad;
+  const minY = Math.min(...ys, STATE.pan.y) - pad;
+  const maxX = Math.max(...xe, STATE.pan.x + wrap.clientWidth / STATE.zoom) + pad;
+  const maxY = Math.max(...ye, STATE.pan.y + wrap.clientHeight / STATE.zoom) + pad;
+  const w = maxX - minX, h = maxY - minY;
+  const mmW = 160, mmH = 100;
+  const sx = mmW / w, sy = mmH / h;
+  const s = Math.min(sx, sy);
+
+  mm.innerHTML = '';
+  STATE.items.forEach(i => {
+    const d = document.createElement('div');
+    d.className = 'mm-dot';
+    d.style.left = ((i.x - minX) * s) + 'px';
+    d.style.top  = ((i.y - minY) * s) + 'px';
+    d.style.width = Math.max(2, (i.w || 80) * s) + 'px';
+    d.style.height = Math.max(2, (i.h || 60) * s) + 'px';
+    d.style.background = i.type === 'patent' ? '#3a6ef5' : (i.color || '#888');
+    mm.appendChild(d);
+  });
+  const vp = document.createElement('div');
+  vp.id = 'miniMapViewport';
+  const vx = (-STATE.pan.x / STATE.zoom - minX) * s;
+  const vy = (-STATE.pan.y / STATE.zoom - minY) * s;
+  const vw = (wrap.clientWidth / STATE.zoom) * s;
+  const vh = (wrap.clientHeight / STATE.zoom) * s;
+  vp.style.left = vx + 'px'; vp.style.top = vy + 'px';
+  vp.style.width = vw + 'px'; vp.style.height = vh + 'px';
+  mm.appendChild(vp);
+}
+
+// ════════════════════════════════════════════════════════════
+// KEYBOARD
+// ════════════════════════════════════════════════════════════
+document.addEventListener('keydown', e => {
+  if (e.target.isContentEditable || e.target.tagName === 'INPUT') {
+    if (e.key === 'Escape') e.target.blur();
+    return;
+  }
+  if (e.key === ' ') { spaceDown = true; wrap.style.cursor = 'grab'; }
+  if (e.key === 'v' || e.key === 'V') setTool('select');
+  if (e.key === 's' || e.key === 'S') setTool('sticky');
+  if (e.key === 't' || e.key === 'T') setTool('text');
+  if (e.key === 'r' || e.key === 'R') setTool('rect');
+  if (e.key === 'o' || e.key === 'O') setTool('ellipse');
+  if (e.key === 'a' || e.key === 'A') setTool('arrow');
+  if (e.key === 'Delete' || e.key === 'Backspace') ctxDelete();
+  if (e.key === 'd' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); ctxDuplicate(); }
+  if (e.key === 'Escape') deselect();
+  if (e.key === '0' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); fitToView(); }
+});
+document.addEventListener('keyup', e => {
+  if (e.key === ' ') { spaceDown = false; wrap.style.cursor = ''; }
+});
+
+// ════════════════════════════════════════════════════════════
+// INIT
+// ════════════════════════════════════════════════════════════
+loadState();
+applyTransform();
+renderAll();
+setTimeout(() => $('#help').classList.add('hidden'), 8000);
+</script>
+</body>
+</html>

@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>HK Patent Search</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;1,700&family=IBM+Plex+Mono:wght@400;600&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="/static/css/styles.css"/>
+<link rel="stylesheet" href="/static/css/editorial.css"/>
+
+
+<style>
+  /* ── AI Search modal ── */
+  .ai-modal-overlay {
+    display: none; position: fixed; inset: 0; z-index: 9999;
+    background: rgba(20, 20, 22, .55); backdrop-filter: blur(6px);
+    align-items: flex-start; justify-content: center; overflow-y: auto; padding: 40px 16px;
+  }
+  .ai-modal {
+    width: 100%; max-width: 880px; background: var(--bg, #fff);
+    border-radius: 14px; box-shadow: 0 20px 80px rgba(0,0,0,.25);
+    padding: 28px 32px 32px; position: relative;
+  }
+  .ai-close {
+    position: absolute; top: 16px; right: 18px;
+    border: none; background: none; cursor: pointer;
+    font-size: 1.2rem; color: var(--muted); padding: 6px 10px;
+  }
+  .ai-title { font-size: 1.35rem; font-weight: 700; margin: 0 0 4px; }
+  .ai-sub   { color: var(--muted); font-size: .85rem; margin: 0 0 20px; }
+  #aiDescInput {
+    width: 100%; min-height: 90px; padding: 12px 14px;
+    border: 1px solid var(--border2, #e5e5e5); border-radius: 10px;
+    font-family: inherit; font-size: .92rem; resize: vertical; box-sizing: border-box;
+  }
+  #aiDescInput:focus { outline: none; border-color: var(--accent, #3a6ef5); }
+  #aiSubmit {
+    margin-top: 12px; padding: 10px 20px; font-size: .9rem; font-weight: 600;
+    background: var(--text, #000); color: var(--bg, #fff); border: none;
+    border-radius: 999px; cursor: pointer;
+  }
+  #aiSubmit:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* Stages */
+  #aiStages { margin-top: 24px; border-left: 2px solid var(--border2, #e5e5e5); padding-left: 0; }
+  .ai-stage {
+    position: relative; padding: 10px 0 10px 28px;
+    display: flex; gap: 10px; align-items: center;
+  }
+  .ai-stage-dot {
+    position: absolute; left: -13px; top: 12px;
+    width: 24px; height: 24px; border-radius: 50%;
+    background: var(--bg, #fff); border: 2px solid var(--border2, #e5e5e5);
+    display: flex; align-items: center; justify-content: center;
+    font-size: .72rem; font-weight: 600; color: var(--muted);
+  }
+  .ai-stage.active .ai-stage-dot { border-color: var(--accent, #3a6ef5); background: var(--accent, #3a6ef5); }
+  .ai-stage.done .ai-stage-dot   { border-color: #0a8556; background: #0a8556; color: #fff; }
+  .ai-stage.error .ai-stage-dot  { border-color: #d13b3b; background: #d13b3b; color: #fff; }
+  .ai-stage.done .num            { display: none; }
+  .ai-stage.active .num          { color: #fff; display: none; }
+  .ai-stage .spin {
+    width: 12px; height: 12px; border: 2px solid rgba(255,255,255,.4);
+    border-top-color: #fff; border-radius: 50%;
+    animation: aispin .8s linear infinite;
+  }
+  .ai-stage .check { color: #fff; font-size: .78rem; }
+  @keyframes aispin { to { transform: rotate(360deg); } }
+
+  .ai-stage-body  { flex: 1; }
+  .ai-stage-label { font-weight: 600; font-size: .88rem; }
+  .ai-stage.pending .ai-stage-label { color: var(--muted); }
+  .ai-stage-detail { font-size: .74rem; color: var(--muted); margin-top: 2px; }
+  .ai-stage-meta  { font-size: .72rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  #aiSummary, #aiResults { margin-top: 20px; }
+
+  /* ── Left nav sidebar ── */
+  #sideNav {
+    position: fixed; top: 0; left: 0; bottom: 0; width: 68px; z-index: 90;
+    background: var(--panel, #fff); border-right: 1px solid var(--border2, #e5e5e2);
+    display: flex; flex-direction: column; align-items: center;
+    padding: 16px 0; gap: 6px;
+  }
+  #sideNav .sn-logo {
+    width: 40px; height: 40px; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.1rem; margin-bottom: 16px;
+    background: #f8d4c0;
+  }
+  #sideNav .sn-btn {
+    width: 48px; height: 48px; border-radius: 10px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 2px; cursor: pointer; border: none;
+    background: transparent; color: var(--muted, #6c6c66);
+    font-size: 1.05rem; transition: all .15s;
+    position: relative;
+  }
+  #sideNav .sn-btn:hover { background: rgba(0,0,0,.04); color: var(--text, #000); }
+  #sideNav .sn-btn .sn-label {
+    font-size: .56rem; font-weight: 600; letter-spacing: .02em;
+    text-transform: uppercase; font-family: 'Inter', sans-serif;
+  }
+  #sideNav .sn-btn.ai {
+    background: linear-gradient(135deg, #000 0%, #2a2a2a 100%);
+    color: #fff; margin-top: 4px;
+  }
+  #sideNav .sn-btn.ai:hover { transform: translateY(-1px); }
+  #sideNav .sn-spacer { flex: 1; }
+  #sideNav .sn-tip {
+    position: absolute; left: 58px; top: 50%; transform: translateY(-50%);
+    background: #1a1a1a; color: #fff; padding: 5px 10px; border-radius: 6px;
+    font-size: .72rem; font-weight: 500; white-space: nowrap; pointer-events: none;
+    opacity: 0; transition: opacity .15s;
+  }
+  #sideNav .sn-btn:hover .sn-tip { opacity: 1; }
+
+  body { padding-left: 68px; }
+
+  /* ── Result card entrance animation ── */
+  @keyframes cardIn {
+    from {
+      opacity: 0;
+      transform: translate(-18px, -12px) scale(.985);
+    }
+    to {
+      opacity: 1;
+      transform: translate(0, 0) scale(1);
+    }
+  }
+  .patent-card.anim-in {
+    animation: cardIn .42s cubic-bezier(.22, .9, .3, 1) both;
+    will-change: opacity, transform;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .patent-card.anim-in { animation: none; }
+  }
+</style>
+</head>
+<body>
+<nav id="sideNav">
+  <div class="sn-logo"><span>h</span></div>
+
+  <button class="sn-btn active" onclick="location.href='/'" title="Search">
+    <span class="sn-label">SRCH</span>
+    <span class="sn-tip">Search patents</span>
+  </button>
+
+  <button class="sn-btn" onclick="location.href='/whiteboard'" title="Whiteboard">
+    <span class="sn-label">BOARD</span>
+    <span class="sn-tip">Whiteboard</span>
+  </button>
+
+  <button class="sn-btn ai" onclick="openAiSearch()" title="AI Patent Analysis (Ctrl+K)">
+    <span class="sn-label">AI</span>
+    <span class="sn-tip">AI Patent Analysis · Ctrl+K</span>
+  </button>
+
+  <div class="sn-spacer"></div>
+</nav>
+
+
+<!-- ── HEADER ── -->
+<header>
+  <div class="logo-wrap">
+    <div class="logo-flower">🌸</div>
+    <div>
+      <div class="logo-name">HK Patent Search</div>
+      <div class="logo-sub">Intellectual Property Registry</div>
+    </div>
+  </div>
+  <div class="header-mid">
+    <div class="header-stat">
+      <div class="header-stat-val" id="dbCount">—</div>
+      <div class="header-stat-lbl">Database Records</div>
+    </div>
+    <div class="header-stat">
+      <div class="header-stat-val">TOP 20</div>
+      <div class="header-stat-lbl">Results Shown</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <button class="ai-tools-btn" id="aiToolsBtn">
+      <span>✦</span> AI Tools <span class="ai-badge">7</span>
+    </button>
+
+  </div>
+</header>
+
+<!-- ── HERO ── -->
+<div class="hero">
+  <div class="hero-eyebrow">Hong Kong Patent Database</div>
+  <h1 class="hero-h1">Find patents by<br><em>keyword or inventor</em></h1>
+  <p class="hero-sub">Search across patent titles, inventors, assignees and abstracts. Results ranked by relevance — title and assignee matches weighted higher.</p>
+
+  <div class="ta-wrap">
+    <div class="search-box">
+      <input id="searchInput" type="text" placeholder="e.g. gear motor, TechHK Ltd, Chan Tai Man …" autocomplete="off"/>
+      <button id="searchBtn">Search</button>
+    </div>
+    <div id="taBox"></div>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap">
+    <div class="try-row" id="tryRow" style="margin-top:0;flex:1">
+      <span class="try-label" id="tryLabel">Try:</span>
+      <span class="try-chip" data-q="motor">motor</span>
+      <span class="try-chip" data-q="Huawei">Huawei</span>
+      <span class="try-chip" data-q="battery">battery</span>
+      <span class="try-chip" data-q="display">display</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+      
+    </div>
+  </div>
+
+  <!-- ── MODE BAR ── separate row, segmented control -->
+  <div style="display:flex;align-items:center;justify-content:flex-start;gap:10px;margin-top:14px;flex-wrap:wrap">
+    <span style="font-size:.7rem;color:var(--muted);letter-spacing:.04em;text-transform:uppercase;font-weight:600">Mode</span>
+    <div id="modeBar" style="display:inline-flex;align-items:center;padding:3px;background:var(--panel,#fff);border:1px solid var(--border2);border-radius:999px;gap:2px">
+      <button class="mode-pill" data-mode="keyword"  onclick="setSearchMode('keyword')">🔤 Keyword</button>
+      <button class="mode-pill" data-mode="semantic" onclick="setSearchMode('semantic')">🧠 Semantic</button>
+      <button class="mode-pill" data-mode="visual"   onclick="setSearchMode('visual')">🖼️ Visual</button>
+    </div>
+    <span id="semanticStatus" style="font-size:.65rem;color:var(--muted2)"></span>
+    <span id="visualUploadWrap" style="display:none;gap:8px;align-items:center">
+      <label for="visualFileInput" style="padding:5px 12px;border:1px solid var(--border2);border-radius:999px;background:var(--panel);font-size:.72rem;font-weight:600;cursor:pointer;color:var(--muted);transition:all .15s" title="Upload a blueprint or drawing">📎 Upload image</label>
+      <input id="visualFileInput" type="file" accept="image/*" style="display:none">
+      <span id="visualPreview" style="display:none;gap:6px;align-items:center;padding:2px 8px;border:1px solid var(--border2);border-radius:999px;background:var(--panel)"></span>
+    </span>
+  </div>
+  <!-- Keep a hidden legacy button so toggleSearchMode() still works if called -->
+  <button id="searchModeBtn" onclick="toggleSearchMode()" style="display:none"></button>
+
+  <style>
+    .mode-pill {
+      padding: 6px 14px; font-size: .75rem; font-weight: 600;
+      border: none; background: none; cursor: pointer; color: var(--muted);
+      border-radius: 999px; font-family: inherit;
+      transition: background .15s, color .15s, transform .1s;
+    }
+    .mode-pill:hover:not(.active) { color: var(--text); background: rgba(0,0,0,.04); }
+    .mode-pill:active { transform: scale(.97); }
+    .mode-pill.active {
+      background: var(--text,#000); color: var(--bg,#fff);
+    }
+  </style>
+</div>
+
+<!-- ── RESULTS ── -->
+<div class="results-wrap">
+  <div class="results-inner" id="resultsInner">
+    <div id="filterSidebar">
+      <div class="fs-section">
+        <div class="fs-title">Status</div>
+        <button class="fs-btn on" data-st="all">All Patents</button>
+        <button class="fs-btn" data-st="granted"><span class="sdot sdot-g"></span>Granted</button>
+        <button class="fs-btn" data-st="pending"><span class="sdot sdot-o"></span>Pending</button>
+        <button class="fs-btn" data-st="expired"><span class="sdot sdot-gr"></span>Likely Expired</button>
+      </div>
+      <div class="fs-section">
+        <div class="fs-title">Filing Year</div>
+        <div class="yr-labels"><span>2000</span><span>2026</span></div>
+        <input type="range" id="yrSlider" min="2000" max="2026" value="2000" step="1"/>
+        <div class="yr-hint">From <strong id="yrFromLbl">2000</strong> onwards</div>
+        <div class="preset-row">
+          <button class="preset-btn" data-yrs="1">Last 12M</button>
+          <button class="preset-btn" data-yrs="5">Last 5Y</button>
+          <button class="preset-btn" data-yrs="10">Last 10Y</button>
+          <button class="preset-btn" data-yrs="all">All</button>
+        </div>
+      </div>
+      <div class="fs-section" id="assSection" style="display:none">
+        <div class="fs-title">Top Assignees</div>
+        <div id="assList"></div>
+      </div>
+    </div>
+    <div>
+      <div id="statusBar"></div>
+      <div class="active-filters" id="activeFilters" style="display:none"></div>
+      <div id="resultsArea">
+        <div class="state-msg">
+          <div class="ico">🔍</div>
+          <h3>Enter a search term above</h3>
+          <p>Search by inventor name, company, technology keyword,<br>or any word from a patent abstract.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════
+     AI PANEL OVERLAY + PANEL
+══════════════════════════════════════ -->
+<div class="panel-overlay" id="panelOverlay"></div>
+
+<div class="ai-panel" id="aiPanel">
+  <div class="panel-header">
+    <span class="panel-title">✦ AI Tools</span>
+    <div style="display:flex;gap:6px;align-items:center">
+      <button class="panel-mini" id="panelMiniBtn" title="Collapse/Expand panel">◧</button>
+      <button class="panel-close" id="panelClose">×</button>
+    </div>
+  </div>
+
+  <div class="panel-tabs">
+    <button class="panel-tab active" data-feat="blueprint">📐 Blueprint</button>
+    <button class="panel-tab" data-feat="classify">🏷 Classify</button>
+    <button class="panel-tab" data-feat="trends">📈 Trends</button>
+    <button class="panel-tab" data-feat="risk">⚠️ Risk</button>
+    <button class="panel-tab" data-feat="competitor">🏢 Competitor</button>
+    <button class="panel-tab" data-feat="agent">🤖 Agent</button>
+    <button class="panel-tab" data-feat="landscape">🕸 Landscape</button>
+    <button class="panel-tab" data-feat="design">🔬 Design</button>
+  </div>
+
+  <div class="panel-body">
+
+    <!-- BLUEPRINT -->
+    <div class="feature-panel active" id="feat-blueprint">
+      <div class="feature-title">Blueprint Image Search</div>
+      <div class="feature-sub">Upload a patent drawing — AI describes it and suggests search keywords.</div>
+      <div class="upload-zone" id="uploadZone">
+        <p style="font-size:1.6rem;margin-bottom:8px">📎</p>
+        <p><strong>Click to upload</strong> or drag & drop</p>
+        <p style="margin-top:4px;font-size:.73rem">PNG, JPG, WEBP supported</p>
+      </div>
+      <input type="file" id="blueprintFile" accept="image/*"/>
+      <img id="blueprintPreview" class="preview-img" style="display:none"/>
+      <div style="margin-top:12px">
+        <input id="blueprintDesc" class="panel-input" placeholder="Optional: add description (e.g. 'rotary motor with coils')"/>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-dark" id="blueprintBtn" disabled>🔍 Analyse & Search</button>
+        <button class="btn btn-outline btn-sm" id="blueprintPromptBtn">📋 Strategic Prompt</button>
+      </div>
+      <div class="ai-loading" id="blueprintLoading"><div class="spinner"></div><p>Sending image to Claude AI…</p></div>
+      <div id="blueprintResult"></div>
+    </div>
+
+    <!-- CLASSIFY -->
+    <div class="feature-panel" id="feat-classify">
+      <div class="feature-title">Patent Classification</div>
+      <div class="feature-sub">Paste a title or abstract — AI returns IPC technology category codes.</div>
+      <textarea id="classifyInput" class="panel-textarea" placeholder="Paste patent title or abstract here…&#10;&#10;Example: A gear motor combining planetary gearbox and brushless motor for EVs…"></textarea>
+      <div class="btn-row">
+        <button class="btn btn-dark" id="classifyBtn">🏷 Classify</button>
+        <button class="btn btn-outline btn-sm" id="classifyExBtn">Load Example</button>
+        <button class="btn btn-outline btn-sm" id="classifyPromptBtn">📋 Strategic Prompt</button>
+      </div>
+      <div class="ai-loading" id="classifyLoading"><div class="spinner"></div><p>Classifying into IPC taxonomy…</p></div>
+      <div id="classifyResult"></div>
+    </div>
+
+    <!-- TRENDS -->
+    <div class="feature-panel" id="feat-trends">
+      <div class="feature-title">Patent Trend Analysis</div>
+      <div class="feature-sub">AI analyses your database to surface hot sectors, filing patterns, and top assignees.</div>
+      <div class="btn-row">
+        <button class="btn btn-dark" id="trendsBtn">📊 Analyse Now</button>
+        <button class="btn btn-outline btn-sm" id="trendsPromptBtn">📋 Strategic Prompt</button>
+      </div>
+      <div class="ai-loading" id="trendsLoading"><div class="spinner"></div><p>Analysing your patent database…</p></div>
+      <div id="trendsResult"></div>
+    </div>
+
+    <!-- RISK -->
+    <div class="feature-panel" id="feat-risk">
+      <div class="feature-title">Infringement Risk Checker</div>
+      <div class="feature-sub">Describe your product — AI flags patents that may conflict. Not legal advice.</div>
+      <textarea id="riskInput" class="panel-textarea" placeholder="Describe your product or invention…&#10;&#10;Example: A foldable smartphone with flexible OLED display and magnetic hinge mechanism."></textarea>
+      <div class="btn-row">
+        <button class="btn btn-dark" id="riskBtn">⚠️ Check Risk</button>
+        <button class="btn btn-outline btn-sm" id="riskExBtn">Load Example</button>
+        <button class="btn btn-outline btn-sm" id="riskPromptBtn">📋 Strategic Prompt</button>
+      </div>
+      <div class="ai-loading" id="riskLoading"><div class="spinner"></div><p>Analysing potential conflicts…</p></div>
+      <div id="riskResult"></div>
+    </div>
+
+    <!-- COMPETITOR -->
+    <div class="feature-panel" id="feat-competitor">
+      <div class="feature-title">Competitor Monitor</div>
+      <div class="feature-sub">Enter a company name to see their patent filing activity and technology focus.</div>
+      <div style="display:flex;gap:8px">
+        <input id="companyInput" class="panel-input" placeholder='e.g. "Samsung", "Huawei", "TechHK Ltd"' style="flex:1"/>
+        <button class="btn btn-dark" id="competitorBtn">Go</button>
+      </div>
+      <div class="chip-row">
+        <span class="chip" data-company="Samsung">Samsung</span>
+        <span class="chip" data-company="Huawei">Huawei</span>
+        <span class="chip" data-company="Microsoft">Microsoft</span>
+        <span class="chip" data-company="Apple">Apple</span>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-outline btn-sm" id="competitorPromptBtn">📋 Strategic Prompt</button>
+      </div>
+      <div class="ai-loading" id="competitorLoading"><div class="spinner"></div><p id="competitorLoadMsg">Searching…</p></div>
+      <div id="competitorResult"></div>
+    </div>
+
+    <!-- PATENT AGENT -->
+    <div class="feature-panel" id="feat-agent">
+      <div class="feature-title">Patent Agent AI</div>
+      <div class="feature-sub">Ask strategic questions about current search results. Example: "Why does HK40128 block my design?"</div>
+      <textarea id="agentInput" class="panel-textarea" placeholder="Ask about prior art, novelty gaps, blocking claims, design-around ideas..."></textarea>
+      <div class="btn-row">
+        <button class="btn btn-dark" id="agentBtn">💬 Ask Agent</button>
+        <button class="btn btn-outline btn-sm" id="agentPromptBtn">📋 Strategic Prompt</button>
+      </div>
+      <div class="ai-loading" id="agentLoading"><div class="spinner"></div><p>Analysing current result set…</p></div>
+      <div id="agentResult"></div>
+    </div>
+
+    <!-- LANDSCAPE -->
+    <div class="feature-panel" id="feat-landscape">
+      <div class="feature-title">Landscape Mapping</div>
+      <div class="feature-sub">View relationship graph across assignees in current results via shared inventor overlap.</div>
+      <div class="btn-row">
+        <button class="btn btn-dark" id="landscapeBtn">🕸 Build Network Map</button>
+        <button class="btn btn-outline btn-sm" id="landscapePromptBtn">📋 Strategic Prompt</button>
+      </div>
+      <div id="landscapeResult"></div>
+    </div>
+
+    <!-- DESIGN ANALYSER -->
+    <div class="feature-panel" id="feat-design">
+      <div class="feature-title">Design Patent Analyser</div>
+      <div class="feature-sub">Describe your design or product — AI breaks it into components and flags which parts conflict with HK patents.</div>
+      <textarea id="designInput" class="panel-textarea" style="min-height:80px" placeholder="Describe your design…&#10;&#10;Example: An electric motor with a permanent magnet rotor, copper stator coils, PWM control circuit, and sealed bearing housing."></textarea>
+      <div class="btn-row">
+        <button class="btn btn-dark" id="designBtn">🔬 Analyse Design</button>
+        <button class="btn btn-outline btn-sm" id="designExBtn">Load Example</button>
+        <button class="btn btn-outline btn-sm" id="designPromptBtn">📋 Strategic Prompt</button>
+      </div>
+      <div class="ai-loading" id="designLoading"><div class="spinner"></div><p id="designLoadMsg">Analysing components…</p></div>
+      <div id="designResult"></div>
+    </div>
+
+  </div><!-- /panel-body -->
+</div><!-- /ai-panel -->
+
+<!-- WORKSPACE OVERLAY -->
+<div id="wsOverlay" style="display:none;position:fixed;inset:0;z-index:300;background:var(--bg);overflow:hidden;flex-direction:column">
+
+  <!-- Workspace Header -->
+  <div style="display:flex;align-items:center;padding:0 24px;height:52px;background:var(--bg);border-bottom:1px solid var(--border);gap:12px;flex-shrink:0">
+    <button onclick="closeWorkspace()" style="display:flex;align-items:center;gap:6px;padding:6px 12px;border:1px solid var(--border2);border-radius:var(--r);background:none;cursor:pointer;font-size:.75rem;font-weight:600;font-family:'Inter',sans-serif;color:var(--text)">← Back</button>
+    <div style="width:1px;height:20px;background:var(--border)"></div>
+    <span id="wsPN" style="font-family:'IBM Plex Mono',monospace;font-size:.72rem;color:var(--muted);background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:2px 8px"></span>
+    <span id="wsTitle" style="font-size:.85rem;font-weight:500;color:var(--text);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></span>
+    <button id="wsAddRef" onclick="wsToggleRef()" style="padding:6px 14px;border:1px solid var(--border2);border-radius:var(--r);background:none;cursor:pointer;font-size:.73rem;font-weight:600;font-family:'Inter',sans-serif;color:var(--text)">＋ Add to References</button>
+    <button onclick="wsExport()" style="padding:6px 14px;border:none;border-radius:var(--r);background:var(--text);color:var(--bg);cursor:pointer;font-size:.73rem;font-weight:600;font-family:'Inter',sans-serif">↓ Export</button>
+  </div>
+
+  <!-- Workspace Tabs -->
+  <div style="display:flex;border-bottom:1px solid var(--border);background:var(--bg);flex-shrink:0">
+    <button class="ws-tab active" data-wstab="detail" onclick="switchWsTab('detail')">📋 Detail</button>
+    <button class="ws-tab" data-wstab="refs" onclick="switchWsTab('refs')">📚 References <span id="wsRefCount" style="background:var(--gold);color:#fff;font-size:.58rem;font-weight:700;padding:1px 5px;border-radius:999px;font-family:'IBM Plex Mono',monospace;margin-left:2px">0</span></button>
+    <button class="ws-tab" data-wstab="compare" onclick="switchWsTab('compare')">⚖️ Compare</button>
+    <button class="ws-tab" data-wstab="trends" onclick="switchWsTab('trends')">📈 Trends</button>
+  </div>
+
+  <!-- Workspace Body -->
+  <div style="display:grid;grid-template-columns:1fr 300px;flex:1;overflow:hidden">
+
+    <!-- Main content -->
+    <div style="overflow-y:auto;border-right:1px solid var(--border)">
+
+      <!-- DETAIL PANEL -->
+      <div class="ws-panel active" id="wsp-detail" style="padding:28px 32px">
+        <div id="wsDetailContent"></div>
+      </div>
+
+      <!-- REFERENCES PANEL -->
+      <div class="ws-panel" id="wsp-refs" style="padding:28px 32px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:20px">
+          <div style="flex:1;font-family:'Playfair Display',serif;font-size:1.1rem" id="wsRefTitle">Reference List</div>
+          <button onclick="wsSelectAll()" style="padding:6px 12px;border:1px solid var(--border2);border-radius:var(--r);background:none;cursor:pointer;font-size:.72rem;font-family:'Inter',sans-serif">Select All</button>
+          <button onclick="wsAICompare()" style="padding:6px 12px;border:none;border-radius:var(--r);background:var(--text);color:var(--bg);cursor:pointer;font-size:.72rem;font-weight:600;font-family:'Inter',sans-serif">⚖️ AI Compare</button>
+        </div>
+        <div id="wsRefList"></div>
+      </div>
+
+      <!-- COMPARE PANEL -->
+      <div class="ws-panel" id="wsp-compare" style="padding:28px 32px">
+        <div style="font-family:'Playfair Display',serif;font-size:1.1rem;margin-bottom:16px">Feature Comparison</div>
+        <div id="wsCompareContent">
+          <div style="text-align:center;padding:48px;color:var(--muted)">
+            <div style="font-size:1.8rem;margin-bottom:10px">⚖️</div>
+            <p>Add patents to your reference list and select 2–5 to compare.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- TRENDS PANEL -->
+      <div class="ws-panel" id="wsp-trends" style="padding:28px 32px">
+        <div style="font-family:'Playfair Display',serif;font-size:1.1rem;margin-bottom:6px">Filing Trends</div>
+        <p style="font-size:.82rem;color:var(--muted);margin-bottom:20px">Based on your reference list.</p>
+        <div id="wsTrendsContent"></div>
+      </div>
+    </div>
+
+    <!-- Sidebar -->
+    <div style="overflow-y:auto;background:var(--bg);padding:20px">
+      <div style="font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin-bottom:10px;font-family:'IBM Plex Mono',monospace">Quick Actions</div>
+      <button onclick="wsQuickAction('ipd')" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:var(--r);background:var(--card);font-size:.78rem;color:var(--text);cursor:pointer;font-family:'Inter',sans-serif;text-align:left;display:flex;align-items:center;gap:8px;margin-bottom:6px">🏛 View on HK IPD Registry ↗</button>
+      <button onclick="wsQuickAction('classify')" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:var(--r);background:var(--card);font-size:.78rem;color:var(--text);cursor:pointer;font-family:'Inter',sans-serif;text-align:left;display:flex;align-items:center;gap:8px;margin-bottom:6px">🏷 Classify this patent</button>
+      <button onclick="wsQuickAction('risk')" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:var(--r);background:var(--card);font-size:.78rem;color:var(--text);cursor:pointer;font-family:'Inter',sans-serif;text-align:left;display:flex;align-items:center;gap:8px;margin-bottom:6px">⚠️ Check infringement risk</button>
+      <button onclick="wsQuickAction('competitor')" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:var(--r);background:var(--card);font-size:.78rem;color:var(--text);cursor:pointer;font-family:'Inter',sans-serif;text-align:left;display:flex;align-items:center;gap:8px;margin-bottom:6px">🏢 View assignee portfolio</button>
+
+      <div style="height:1px;background:var(--border);margin:16px 0"></div>
+      <div style="font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin-bottom:10px;font-family:'IBM Plex Mono',monospace">References (<span id="wsSideRefCount">0</span>)</div>
+      <div id="wsSideRefList"><p style="font-size:.73rem;color:var(--muted)">No references yet.</p></div>
+
+      <div style="height:1px;background:var(--border);margin:16px 0"></div>
+      <div id="wsSideAI"></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- COMPARE BAR -->
+<div id="cmpBar">
+  <div><span class="cmp-cnt" id="cmpCnt">0</span> patents selected for comparison</div>
+  <div style="display:flex;gap:8px">
+    <button id="expCsvBtn">Export CSV</button>
+    <button id="expPdfBtn">Export PDF</button>
+    <button id="execRptBtn">Exec Report</button>
+    <button id="clrCmpBtn">Clear</button>
+    <button id="doCmpBtn">Compare with AI →</button>
+  </div>
+</div>
+
+<!-- COMPARE MODAL -->
+<div class="cmp-overlay" id="cmpOverlay">
+  <div class="cmp-modal" id="cmpModal"></div>
+</div>
+
+<script src="/static/js/app.js"></script>
+<div id="aiSearchModal" class="ai-modal-overlay">
+  <div class="ai-modal">
+    <button class="ai-close" onclick="closeAiSearch()">✕</button>
+    <h2 class="ai-title">✨ AI Patent Analysis</h2>
+    <p class="ai-sub">Describe your invention and we'll find relevant HK patents across keyword, semantic, and classification searches — then Gemini ranks the best matches.</p>
+
+    <textarea id="aiDescInput" placeholder="e.g. A foldable smartphone display with a hinge mechanism that allows smooth transition between phone and tablet form factors without creasing the OLED panel, using a variable-radius flex zone…"></textarea>
+    <div><button id="aiSubmit" onclick="runAiSearch()">✨ Run AI analysis</button></div>
+
+    <div id="aiStages"></div>
+    <div id="aiSummary"></div>
+    <div id="aiResults"></div>
+  </div>
+</div>
+</body>
+</html>
