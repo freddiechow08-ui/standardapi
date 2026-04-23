@@ -1,21 +1,18 @@
 """
 app.py - HK Patent Search with Semantic Search
 """
-
-import pickle
-from PIL import Image
-import numpy as np
-import csv
-import logging
 import os
 import re
+import csv
+import logging
 import sqlite3
-import urllib.parse
 import pickle
+from urllib.parse import urlparse
 from contextlib import contextmanager
 from typing import Any, Dict, List
 
-import requests
+from PIL import Image
+import flask
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 
@@ -25,8 +22,9 @@ try:
 except ImportError:
     HAS_NUMPY = False
 
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', 'AIzaSyAV3w_Iad9HLCxtxxs3tZAiN-M0ubctdYY')
-GEMINI_MODEL = 'gemini-2.5-flash'
+# Configuration
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+GEMINI_MODEL = 'gemini-2.5-flash' # Ensure this version name is correct for the current API
 
 app = Flask(__name__, static_folder='static')
 CORS(app)
