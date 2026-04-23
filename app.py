@@ -11,7 +11,6 @@ from urllib.parse import urlparse
 from contextlib import contextmanager
 from typing import Any, Dict, List
 
-from PIL import Image
 import flask
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
