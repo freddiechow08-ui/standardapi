@@ -2,7 +2,6 @@
 app.py - HK Patent Search with Semantic Search
 """
 
-import torch
 import clip
 import pickle
 from PIL import Image
