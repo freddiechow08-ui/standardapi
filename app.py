@@ -15,7 +15,7 @@ from typing import Any, Dict, List
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 GEMINI_MODEL = 'gemini-2.5-flash' # Ensure this version name is correct for the current API
 
-app = Flask(__name__, static_folder='static')
+app = (__name__, static_folder='static')
 CORS(app)
 logger = logging.getLogger(__name__)
 
