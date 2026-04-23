@@ -11,16 +11,6 @@ from urllib.parse import urlparse
 from contextlib import contextmanager
 from typing import Any, Dict, List
 
-import flask
-from flask import Flask, request, jsonify, send_from_directory
-from flask_cors import CORS
-
-try:
-    import numpy as np
-    HAS_NUMPY = True
-except ImportError:
-    HAS_NUMPY = False
-
 # Configuration
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 GEMINI_MODEL = 'gemini-2.5-flash' # Ensure this version name is correct for the current API
