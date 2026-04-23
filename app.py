@@ -7,15 +7,36 @@ import csv
 import logging
 import sqlite3
 import pickle
-from urllib.parse import urlparse
+import urllib.parse
+import json
 from contextlib import contextmanager
 from typing import Any, Dict, List
 
-# Configuration
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
-GEMINI_MODEL = 'gemini-2.5-flash' # Ensure this version name is correct for the current API
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
+import requests
 
-app = (__name__, static_folder=='static')
+# Optional imports (fail gracefully if not installed)
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
+
+try:
+    import torch
+    import clip
+    from PIL import Image
+    HAS_CLIP = True
+except ImportError:
+    HAS_CLIP = False
+
+# Configuration
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
+GEMINI_MODEL = 'gemini-2.5-flash'
+
+# Flask app - FIXED LINE
+app = Flask(__name__, static_folder='static')
 CORS(app)
 logger = logging.getLogger(__name__)
 
@@ -105,7 +126,6 @@ def index():
 @app.route('/workspace')
 def workspace_page():
     return send_from_directory('static', 'workspace.html')
-
 
 @app.route('/whiteboard')
 def whiteboard_page():
@@ -206,6 +226,9 @@ def get_patent(patent_number: str):
 
 @app.route('/api/ai/generate', methods=['POST'])
 def ai_generate():
+    if not GEMINI_API_KEY:
+        return jsonify({'error': 'GEMINI_API_KEY not set. Add your API key.'}), 500
+    
     try:
         payload = request.get_json(silent=True) or {}
         messages = payload.get('messages', [])
@@ -247,32 +270,23 @@ def ai_generate():
         return jsonify({'error': str(e)}), 500
 
 # ============================================================
-# CLIP VISUAL SEARCH — replace the existing block in your app.py
-# ============================================================
-# What changed:
-#   - /api/blueprint-search now accepts EITHER image upload OR 'q' text param
-#   - Returns '_similarity' field (matches the semantic-search convention)
-#   - Caches the preprocess transform so we don't reload the model each call
-#   - Handles missing patent numbers gracefully (not everything in the
-#     vectors dict will be in the patents DB)
-#   - Adds /api/blueprint-search/status for the frontend to detect availability
+# CLIP VISUAL SEARCH (only if CLIP is available)
 # ============================================================
 
-CLIP_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+CLIP_DEVICE = "cuda" if HAS_CLIP and torch.cuda.is_available() else "cpu"
 CLIP_MODEL = None
 CLIP_PREPROCESS = None
 CLIP_VECTORS = None
 
-
 def get_clip():
-    """Lazy-load CLIP model + preprocess. Cached after first call."""
     global CLIP_MODEL, CLIP_PREPROCESS
+    if not HAS_CLIP:
+        return None, None
     if CLIP_MODEL is None:
         print("Loading CLIP ViT-B/32...")
         CLIP_MODEL, CLIP_PREPROCESS = clip.load("ViT-B/32", device=CLIP_DEVICE)
         CLIP_MODEL.eval()
     return CLIP_MODEL, CLIP_PREPROCESS
-
 
 def load_patent_vectors():
     global CLIP_VECTORS
@@ -281,100 +295,99 @@ def load_patent_vectors():
         if os.path.exists(vector_file):
             with open(vector_file, 'rb') as f:
                 CLIP_VECTORS = pickle.load(f)
-            # Pre-stack vectors into a matrix for fast cosine similarity
             pn_list = list(CLIP_VECTORS['vectors'].keys())
-            mat = np.array([CLIP_VECTORS['vectors'][p] for p in pn_list], dtype=np.float32)
-            # Normalize rows (if not already)
-            norms = np.linalg.norm(mat, axis=1, keepdims=True)
-            norms[norms == 0] = 1
-            mat = mat / norms
-            CLIP_VECTORS['_pn_list'] = pn_list
-            CLIP_VECTORS['_matrix'] = mat
-            print(f"Loaded {len(pn_list)} patent vectors (dim={mat.shape[1]})")
+            if HAS_NUMPY and len(pn_list) > 0:
+                mat = np.array([CLIP_VECTORS['vectors'][p] for p in pn_list], dtype=np.float32)
+                norms = np.linalg.norm(mat, axis=1, keepdims=True)
+                norms[norms == 0] = 1
+                mat = mat / norms
+                CLIP_VECTORS['_pn_list'] = pn_list
+                CLIP_VECTORS['_matrix'] = mat
+            else:
+                CLIP_VECTORS['_pn_list'] = []
+                CLIP_VECTORS['_matrix'] = None
+            print(f"Loaded {len(pn_list)} patent vectors")
         else:
             CLIP_VECTORS = {'vectors': {}, 'paths': [], '_pn_list': [], '_matrix': None}
     return CLIP_VECTORS
 
-
 def _clip_encode_image(img):
-    """PIL.Image -> 512-dim normalized CLIP vector (numpy)."""
     model, preprocess = get_clip()
+    if model is None or preprocess is None:
+        return None
     tensor = preprocess(img).unsqueeze(0).to(CLIP_DEVICE)
     with torch.no_grad():
         v = model.encode_image(tensor)
         v = v / v.norm(dim=-1, keepdim=True)
     return v.cpu().numpy().flatten().astype(np.float32)
 
-
 def _clip_encode_text(text):
-    """String -> 512-dim normalized CLIP vector (numpy)."""
     model, _ = get_clip()
+    if model is None:
+        return None
     tokens = clip.tokenize([text], truncate=True).to(CLIP_DEVICE)
     with torch.no_grad():
         v = model.encode_text(tokens)
         v = v / v.norm(dim=-1, keepdim=True)
     return v.cpu().numpy().flatten().astype(np.float32)
 
-
 def _visual_search_with_vector(query_vec, limit=20):
-    """Run cosine similarity against the patent matrix, return ranked results."""
     data = load_patent_vectors()
-    if data.get('_matrix') is None or len(data['_pn_list']) == 0:
+    if not HAS_NUMPY or data.get('_matrix') is None or len(data['_pn_list']) == 0:
         return [], 0
 
     mat = data['_matrix']
     pn_list = data['_pn_list']
-
-    scores = mat @ query_vec  # cosine since both sides are L2-normalized
+    
+    if query_vec.ndim == 1:
+        query_vec = query_vec.reshape(1, -1)
+    
+    scores = mat @ query_vec.T
+    scores = scores.flatten()
+    
     top_idx = np.argsort(scores)[::-1][:limit]
     top = [(pn_list[i], float(scores[i])) for i in top_idx]
-
+    
     score_map = {pn: s for pn, s in top}
     pn_vals = [pn for pn, _ in top]
     placeholders = ','.join('?' * len(pn_vals))
-
+    
     with get_db() as con:
         rows = con.execute(
             f'SELECT * FROM patents WHERE patent_number IN ({placeholders})',
             pn_vals
         ).fetchall()
-
-    # Build results in score order (and keep patents even if missing from DB)
+    
     results = []
     row_map = {r['patent_number']: r for r in rows}
     for pn, raw in top:
         row = row_map.get(pn)
         if row is None:
-            # Patent is in the vectors but not in the DB (edge case)
             d = {col: '' for col in PATENT_COLUMNS}
             d['patent_number'] = pn
         else:
             d = row_to_dict(row)
-        # Map cosine [-1..1] -> 0..100 similarity score
         d['_similarity'] = round(max(0.0, raw) * 100, 1)
         results.append(d)
-
+    
     return results, len(results)
-
 
 @app.route('/api/blueprint-search', methods=['POST', 'GET'])
 def blueprint_search():
-    """
-    Visual search. Accepts:
-      POST multipart with 'image' file  -> image-to-image CLIP search
-      POST or GET with 'q' parameter    -> text-to-image CLIP search
-    """
+    if not HAS_CLIP:
+        return jsonify({'error': 'CLIP not installed. Run: pip install clip-by-openai'}), 500
+    
     limit = min(int(request.args.get('limit', 20)), 50)
-
+    
     try:
-        # Branch 1: image upload
         if 'image' in request.files and request.files['image'].filename:
             f = request.files['image']
             img = Image.open(f.stream).convert('RGB')
             qvec = _clip_encode_image(img)
+            if qvec is None:
+                return jsonify({'error': 'CLIP model not loaded'}), 500
             mode = 'visual-image'
         else:
-            # Branch 2: text-to-image (from form, json, or query string)
             q = (request.form.get('q')
                  or (request.get_json(silent=True) or {}).get('q')
                  or request.args.get('q', '')).strip()
@@ -382,72 +395,59 @@ def blueprint_search():
             if not q:
                 return jsonify({'error': 'Provide either image upload or q= text'}), 400
             qvec = _clip_encode_text(q)
+            if qvec is None:
+                return jsonify({'error': 'CLIP model not loaded'}), 500
             mode = 'visual-text'
-
+        
         results, total = _visual_search_with_vector(qvec, limit=limit)
-        return jsonify({
-            'results': results,
-            'total': total,
-            'mode': mode,
-        })
+        return jsonify({'results': results, 'total': total, 'mode': mode})
+    
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-
 @app.route('/api/blueprint-search/status')
 def blueprint_search_status():
-    """Frontend calls this to know if Visual search is available."""
     data = load_patent_vectors()
     n = len(data.get('_pn_list', []))
-    return jsonify({
-        'available': n > 0,
-        'embedded': n,
-    })
+    return jsonify({'available': HAS_CLIP and n > 0, 'embedded': n})
 
-
-import json
-
+# ============================================================
+# AI Search analyze/judge endpoints
+# ============================================================
 
 def _gemini_call(system: str, user_text: str, max_tokens: int = 2048) -> dict:
-    """Synchronous Gemini call returning parsed JSON where possible."""
+    if not GEMINI_API_KEY:
+        return {'_error': 'GEMINI_API_KEY not set'}
     body = {
         'contents': [{'role': 'user', 'parts': [{'text': user_text}]}],
-        'generationConfig': {
-            'maxOutputTokens': max_tokens,
-            'responseMimeType': 'application/json',
-        },
+        'generationConfig': {'maxOutputTokens': max_tokens},
         'systemInstruction': {'parts': [{'text': system}]},
     }
-    url = (f'https://generativelanguage.googleapis.com/v1beta/models/'
-           f'{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}')
-    resp = requests.post(url, headers={'content-type': 'application/json'},
-                         json=body, timeout=60)
-    data = resp.json()
-    text = ''
-    for cand in data.get('candidates', []):
-        for p in cand.get('content', {}).get('parts', []):
-            if p.get('text'):
-                text += p['text']
-        if text:
-            break
+    url = f'https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}'
     try:
-        return json.loads(text)
-    except Exception:
-        return {'_raw': text}
-
+        resp = requests.post(url, headers={'content-type': 'application/json'}, json=body, timeout=60)
+        data = resp.json()
+        text = ''
+        for cand in data.get('candidates', []):
+            for p in cand.get('content', {}).get('parts', []):
+                if p.get('text'):
+                    text += p['text']
+            if text:
+                break
+        try:
+            return json.loads(text)
+        except:
+            return {'_raw': text}
+    except Exception as e:
+        return {'_error': str(e)}
 
 @app.route('/api/ai-search/analyze', methods=['POST'])
 def ai_search_analyze():
-    """
-    Step 1: parse user's invention description into structured search terms.
-    Input : { description: str }
-    Output: { keywords, ipc_codes, technical_field, search_queries, rationale }
-    """
     payload = request.get_json(silent=True) or {}
     desc = (payload.get('description') or '').strip()
     if not desc:
         return jsonify({'error': 'description required'}), 400
-
+    
     system = (
         "You are a patent analysis assistant. Given an invention description, "
         "extract information useful for searching a Hong Kong patent database. "
@@ -455,67 +455,42 @@ def ai_search_analyze():
         '{"technical_field": str, "keywords": [str, str, ...], '
         '"ipc_codes": [{"code": "A01B", "description": "..."}], '
         '"search_queries": [str, str, ...], "rationale": str} '
-        "Keywords must be single words or short phrases. Include both "
-        "specific technical terms AND broader synonyms. Search queries "
-        "should be 2-4 words each, designed for a full-text search. "
-        "Provide 3-6 queries that approach the invention from different angles. "
-        "IPC codes are the international patent classification prefixes."
+        "Keywords must be single words or short phrases. Provide 3-6 queries."
     )
-    try:
-        result = _gemini_call(system, desc, max_tokens=1500)
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
+    result = _gemini_call(system, desc, max_tokens=1500)
+    return jsonify(result)
 
 @app.route('/api/ai-search/judge', methods=['POST'])
 def ai_search_judge():
-    """
-    Step 4: given the user's description and a list of candidate patents,
-    have Gemini rate each patent's relevance and explain why.
-    Input : { description, candidates: [{patent_number, title, abstract}, ...] }
-    Output: { judgements: [{patent_number, relevance: 0-100, reason}, ...] }
-    """
     payload = request.get_json(silent=True) or {}
     desc = (payload.get('description') or '').strip()
     candidates = payload.get('candidates') or []
     if not desc or not candidates:
         return jsonify({'error': 'description and candidates required'}), 400
-
-    # Cap at 20 — more than that burns tokens without much added value
+    
     candidates = candidates[:20]
-
     lines = []
     for i, c in enumerate(candidates, 1):
         pn = c.get('patent_number', '')
         title = (c.get('title') or '')[:150]
         abstract = (c.get('abstract') or '')[:400]
         lines.append(f"[{i}] {pn} — {title}\nAbstract: {abstract}")
-
-    user_text = (
-        f"USER'S INVENTION:\n{desc}\n\n"
-        f"CANDIDATE PATENTS:\n" + "\n\n".join(lines)
-    )
-
+    
+    user_text = f"USER'S INVENTION:\n{desc}\n\nCANDIDATE PATENTS:\n" + "\n\n".join(lines)
+    
     system = (
         "You are a patent prior-art analyst. For each candidate patent, "
-        "rate how closely it relates to the user's invention on a 0-100 scale "
-        "(100 = essentially the same invention, 0 = unrelated). Give a "
-        "concise one-sentence reason explaining the technical overlap. "
-        "Respond ONLY with JSON in this schema: "
-        '{"judgements": [{"patent_number": str, "relevance": int, '
-        '"reason": str}, ...]} '
-        "Include an entry for EVERY candidate in the same order. Be critical; "
-        "most candidates should score below 60 unless truly similar."
+        "rate relevance 0-100 (100 = identical). Give a one-sentence reason. "
+        "Respond ONLY with JSON: "
+        '{"judgements": [{"patent_number": str, "relevance": int, "reason": str}, ...]}'
     )
-    try:
-        result = _gemini_call(system, user_text, max_tokens=3000)
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    result = _gemini_call(system, user_text, max_tokens=3000)
+    return jsonify(result)
 
 if __name__ == '__main__':
     print('\n-- HK Patent Search --')
     print(f'   Database: {DB_FILE}')
+    print(f'   NumPy: {"✓" if HAS_NUMPY else "✗ (install numpy)"}')
+    print(f'   CLIP: {"✓" if HAS_CLIP else "✗ (install clip-by-openai)"}')
     print('   Server: http://localhost:5000\n')
     app.run(host='0.0.0.0', port=5000, debug=False)
