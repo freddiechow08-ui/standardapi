@@ -488,9 +488,8 @@ def ai_search_judge():
     return jsonify(result)
 
 if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
     print('\n-- HK Patent Search --')
     print(f'   Database: {DB_FILE}')
-    print(f'   NumPy: {"✓" if HAS_NUMPY else "✗ (install numpy)"}')
-    print(f'   CLIP: {"✓" if HAS_CLIP else "✗ (install clip-by-openai)"}')
-    print('   Server: http://localhost:5000\n')
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    print(f'   Server: http://localhost:{port}\n')
+    app.run(host='0.0.0.0', port=port, debug=False)
